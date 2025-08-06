@@ -54,10 +54,12 @@ client.on(Events.InteractionCreate, async interaction => {
       sessionLink = interaction.options.getString('link');
       const channelId = interaction.options.getString('channel');
       sessionChannel = await client.channels.fetch(channelId).catch(() => null);
+console.log('Channel fetched:', sessionChannel?.name || 'None');
 
-      if (!sessionChannel || sessionChannel.type !== 0) {
-        return interaction.reply({ content: '⚠️ Invalid channel ID.', ephemeral: true });
-      }
+      if (!sessionChannel?.isTextBased?.()) {
+  return interaction.reply({ content: '⚠️ Invalid or unsupported channel type.', ephemeral: true });
+}
+
 
       activeSession = true;
       sessionStartTime = Date.now();
