@@ -7,10 +7,10 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-let activeSession = null;
+let activeSession = false;
 let sessionLink = null;
 let sessionStartTime = null;
-let sessionChannel = null;
+const sessionChannelId = '1391712465364193323'; // canalul unde trimite automat mesajul
 const shiftStatus = new Map();
 
 client.once(Events.ClientReady, () => {
@@ -32,7 +32,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const requiredRole = roleMap[department];
 
       if (!interaction.member.roles.cache.some(role => role.name === requiredRole)) {
-        return interaction.reply({ content: `⛔ You don’t have the role to start a shift as ${requiredRole}.`, ephemeral: true });
+        return interaction.reply({ content: `⛔ You don't have the role to start a shift as ${requiredRole}.`, ephemeral: true });
       }
 
       shiftStatus.set(interaction.user.id, requiredRole);
@@ -52,17 +52,8 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       sessionLink = interaction.options.getString('link');
-      const channelId = interaction.options.getString('channel');
-      sessionChannel = await client.channels.fetch(channelId).catch(() => null);
-console.log('Channel fetched:', sessionChannel?.name || 'None');
-
-      if (!sessionChannel?.isTextBased?.()) {
-  return interaction.reply({ content: '⚠️ Invalid or unsupported channel type.', ephemeral: true });
-}
-
-
-      activeSession = true;
       sessionStartTime = Date.now();
+      activeSession = true;
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -76,43 +67,45 @@ console.log('Channel fetched:', sessionChannel?.name || 'None');
         .setDescription('Session starts in **5 minutes**.\n🔒 Only Public Services and Patreon can access the link right now.\nClick the button below to get access.')
         .setColor(0x00AE86);
 
+      const sessionChannel = await client.channels.fetch(sessionChannelId).catch(() => null);
+      if (!sessionChannel?.isTextBased?.()) {
+        return interaction.reply({ content: '⚠️ Cannot post session in the specified channel.', ephemeral: true });
+      }
+
       const msg = await sessionChannel.send({ embeds: [embed], components: [row] });
 
       setTimeout(async () => {
         const everyoneEmbed = new EmbedBuilder()
           .setTitle('🟢 RP Session is Now Open!')
-          .setDescription('Everyone can now access the link. Click the button to get it.')
+          .setDescription('Everyone can now access the link. Click the button below to get it.')
           .setColor(0x00FF00);
-
         await msg.edit({ embeds: [everyoneEmbed] });
-        activeSession = null;
+        activeSession = false;
       }, 5 * 60 * 1000);
 
-      return interaction.reply({ content: '✅ Session scheduled.', ephemeral: true });
+      return interaction.reply({ content: '✅ Session started and announcement posted.', ephemeral: true });
     }
   }
 
-  // Button interaction: get_link
-  if (interaction.isButton()) {
-    if (interaction.customId === 'get_link') {
-      const now = Date.now();
-      const within5Min = sessionStartTime && (now - sessionStartTime < 5 * 60 * 1000);
-      const roles = interaction.member.roles.cache.map(r => r.name);
-      const hasPublicRole = ['Fire & Rescue', 'Law Enforcement', 'DOT'].some(role => roles.includes(role));
-      const isPatreon = roles.includes('Patreon');
+  // Handle button interaction
+  if (interaction.isButton() && interaction.customId === 'get_link') {
+    const now = Date.now();
+    const within5Min = activeSession && (now - sessionStartTime < 5 * 60 * 1000);
+    const roles = interaction.member.roles.cache.map(r => r.name);
+    const hasPublicRole = ['Fire & Rescue', 'Law Enforcement', 'DOT'].some(role => roles.includes(role));
+    const isPatreon = roles.includes('Patreon');
 
-      if (within5Min && !isPatreon) {
-        const hasStartedShift = shiftStatus.get(interaction.user.id);
-        if (!hasStartedShift || !roles.includes(hasStartedShift)) {
-          return interaction.reply({ content: '⛔ You must run `/shift start` first with the correct role to join early.', ephemeral: true });
-        }
+    if (within5Min && !isPatreon) {
+      const startedShiftAs = shiftStatus.get(interaction.user.id);
+      if (!startedShiftAs || !roles.includes(startedShiftAs)) {
+        return interaction.reply({ content: '⛔ You must use `/shift start` with your correct department role before joining.', ephemeral: true });
       }
-
-      return interaction.reply({
-        content: `🔗 Roblox Server Link: ${sessionLink}`,
-        ephemeral: true
-      });
     }
+
+    return interaction.reply({
+      content: `🔗 Roblox Server Link: ${sessionLink}`,
+      ephemeral: true
+    });
   }
 });
 
