@@ -14,16 +14,13 @@ const commands = [
           { name: 'Police', value: 'police' },
           { name: 'DOT', value: 'dot' },
         )),
+
   new SlashCommandBuilder()
     .setName('session')
     .setDescription('Start a roleplay session')
     .addStringOption(option =>
       option.setName('link')
-        .setDescription('Roblox Private Server link')
-        .setRequired(true))
-    .addStringOption(option =>
-      option.setName('channel')
-        .setDescription('Channel ID to post the session')
+        .setDescription('Roblox private server link')
         .setRequired(true)),
 ].map(cmd => cmd.toJSON());
 
@@ -36,8 +33,4 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
       Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
       { body: commands }
     );
-    console.log('✅ Slash commands registered!');
-  } catch (err) {
-    console.error(err);
-  }
-})();
+    console.log('✅ Sla
