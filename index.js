@@ -14,7 +14,6 @@ const pool = new Pool({
 
 let sessionMessageId = null;
 const sessionChannelId = '1391712465364193323';
-const psRadioChannelId = '1391845254298210304';
 
 function hasRole(member, name) {
   return member.roles.cache.some(role => role.name.toLowerCase() === name.toLowerCase());
@@ -28,21 +27,23 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  const { commandName, options, member, guild } = interaction;
+  const { commandName, options, member } = interaction;
 
   if (commandName === 'caradd') {
     const name = options.getString('name');
     const color = options.getString('color');
     const plate = options.getString('plate').toUpperCase();
+    const max = hasRole(member, 'Patreon') ? 20 : 5;
 
-    const maxCars = hasRole(member, 'Patreon') ? 20 : 5;
-    const carCount = await pool.query('SELECT COUNT(*) FROM cars WHERE user_id = $1', [member.id]);
-    if (parseInt(carCount.rows[0].count) >= maxCars) return interaction.reply({ content: `❌ You can only register up to ${maxCars} cars.`, ephemeral: true });
+    const count = await pool.query('SELECT COUNT(*) FROM cars WHERE user_id = $1', [member.id]);
+    if (parseInt(count.rows[0].count) >= max) {
+      return interaction.reply({ content: `❌ You can only register ${max} cars.`, ephemeral: true });
+    }
 
     await pool.query('INSERT INTO cars (user_id, username, car_name, color, plate, created_at) VALUES ($1, $2, $3, $4, $5, NOW())',
       [member.id, member.user.username, name, color, plate]);
 
-    return interaction.reply({ content: `✅ Car registered: ${name} (${color}) - Plate: ${plate}`, ephemeral: true });
+    return interaction.reply({ content: `✅ Car registered: ${name} (${color}) – ${plate}`, ephemeral: true });
   }
 
   if (commandName === 'cardelete') {
@@ -74,73 +75,41 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ embeds: [embed], ephemeral: true });
   }
 
- if (commandName === 'ticket') {
-  try {
-    const target = options.getUser('user');
-    const reason = options.getString('reason');
-    const proof = options.getString('proof') || null;
+  if (commandName === 'ticket') {
+    try {
+      const target = options.getUser('user');
+      const reason = options.getString('reason');
+      const proof = options.getString('proof') || null;
 
-    await pool.query(
-      'INSERT INTO tickets (user_id, username, reason, proof_link, created_at) VALUES ($1, $2, $3, $4, NOW())',
-      [target.id, target.username, reason, proof]
-    );
-
-    const count = await pool.query('SELECT COUNT(*) FROM tickets WHERE user_id = $1', [target.id]);
-    if (parseInt(count.rows[0].count) >= 10) {
       await pool.query(
-        'INSERT INTO logs (user_id, username, reason, created_at) VALUES ($1, $2, $3, NOW())',
-        [target.id, target.username, '10 tickets received']
+        'INSERT INTO tickets (user_id, username, reason, proof_link, created_at) VALUES ($1, $2, $3, $4, NOW())',
+        [target.id, target.username, reason, proof]
       );
+
+      const count = await pool.query('SELECT COUNT(*) FROM tickets WHERE user_id = $1', [target.id]);
+      if (parseInt(count.rows[0].count) >= 10) {
+        await pool.query('INSERT INTO logs (user_id, username, reason, created_at) VALUES ($1, $2, $3, NOW())',
+          [target.id, target.username, '10 tickets received']);
+      }
+
+      const logCount = await pool.query('SELECT COUNT(*) FROM logs WHERE user_id = $1', [target.id]);
+      if (parseInt(logCount.rows[0].count) >= 3) {
+        await target.send('⚠️ You are session banned due to receiving 3 or more logs.');
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🚨 Ticket Issued')
+        .setDescription(`**User:** ${target}\n**Reason:** ${reason}\n**Proof:** ${proof || 'None'}`)
+        .setColor('Red');
+
+      await interaction.channel.send({ embeds: [embed] });
+      await target.send({ embeds: [embed] });
+
+      return interaction.reply({ content: '✅ Ticket issued.', ephemeral: true });
+    } catch (err) {
+      console.error('❌ Error in /ticket:', err);
+      return interaction.reply({ content: '❌ Failed to issue ticket.', ephemeral: true });
     }
-
-    const logCount = await pool.query('SELECT COUNT(*) FROM logs WHERE user_id = $1', [target.id]);
-    if (parseInt(logCount.rows[0].count) >= 3) {
-      await target.send('⚠️ You are session banned due to receiving 3 or more logs.');
-    }
-
-    const embed = new EmbedBuilder()
-      .setTitle('🚨 Ticket Issued')
-      .setDescription(`**User:** ${target}\n**Reason:** ${reason}\n**Proof:** ${proof || 'None'}`)
-      .setColor('Red');
-
-    await interaction.channel.send({ embeds: [embed] });
-    await target.send({ embeds: [embed] });
-
-    return interaction.reply({ content: '✅ Ticket issued.', ephemeral: true });
-
-  } catch (err) {
-    console.error('❌ Error in /ticket:', err);
-    return interaction.reply({ content: '❌ Failed to issue ticket.', ephemeral: true });
-  }
-}
-
-    const target = options.getUser('user');
-    const reason = options.getString('reason');
-    const proof = options.getString('proof') || null;
-
-    await pool.query('INSERT INTO tickets (user_id, username, reason, proof_link, created_at) VALUES ($1, $2, $3, $4, NOW())',
-      [target.id, target.username, reason, proof]);
-
-    const count = await pool.query('SELECT COUNT(*) FROM tickets WHERE user_id = $1', [target.id]);
-    if (parseInt(count.rows[0].count) >= 10) {
-      await pool.query('INSERT INTO logs (user_id, username, reason, created_at) VALUES ($1, $2, $3, NOW())',
-        [target.id, target.username, '10 tickets received']);
-    }
-
-    const logCount = await pool.query('SELECT COUNT(*) FROM logs WHERE user_id = $1', [target.id]);
-    if (parseInt(logCount.rows[0].count) >= 3) {
-      target.send('⚠️ You are session banned due to 3 or more logs.');
-    }
-
-    const embed = new EmbedBuilder()
-      .setTitle('🚨 Ticket Issued')
-      .setDescription(`**User:** ${target}\n**Reason:** ${reason}\n**Proof:** ${proof || 'None'}`)
-      .setColor('Red');
-
-    await interaction.channel.send({ embeds: [embed] });
-    await target.send({ embeds: [embed] });
-
-    return interaction.reply({ content: '✅ Ticket issued.', ephemeral: true });
   }
 
   if (commandName === 'ticketdelete') {
@@ -160,15 +129,20 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (commandName === 'shift') {
-    const sub = interaction.options.getSubcommand();
+    const sub = options.getSubcommand();
 
     if (sub === 'start') {
       const department = options.getString('department');
-      const requiredRole = department === 'fd' ? 'Fire & Rescue' : department === 'le' ? 'Law Enforcement' : 'DOT';
-      if (!hasRole(member, requiredRole)) return interaction.reply({ content: `❌ You don’t have the ${requiredRole} role.`, ephemeral: true });
+      const role = department === 'fd' ? 'Fire & Rescue' : department === 'le' ? 'Law Enforcement' : 'DOT';
 
-      await pool.query('INSERT INTO shifts (user_id, department) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET department = $2', [member.id, department]);
-      return interaction.reply({ content: `✅ Shift started as ${requiredRole}.`, ephemeral: true });
+      if (!hasRole(member, role)) {
+        return interaction.reply({ content: `❌ You don’t have the ${role} role.`, ephemeral: true });
+      }
+
+      await pool.query('INSERT INTO shifts (user_id, department) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET department = $2',
+        [member.id, department]);
+
+      return interaction.reply({ content: `✅ Shift started as ${role}.`, ephemeral: true });
     }
 
     if (sub === 'end') {
@@ -182,7 +156,6 @@ client.on('interactionCreate', async interaction => {
 
     if (sub === 'start') {
       const link = options.getString('link');
-
       const embed = new EmbedBuilder()
         .setTitle('📢 Session Starting')
         .setDescription('A roleplay session will begin in 5 minutes.\nOnly Public Services and Patreon can join early.')
@@ -199,8 +172,8 @@ client.on('interactionCreate', async interaction => {
       sessionMessageId = message.id;
 
       setTimeout(() => {
-        const everyoneEmbed = EmbedBuilder.from(embed).setDescription('Session is now open to everyone.');
-        client.channels.cache.get(sessionChannelId).send({ embeds: [everyoneEmbed] });
+        const updated = EmbedBuilder.from(embed).setDescription('Session is now open to everyone.');
+        client.channels.cache.get(sessionChannelId).send({ embeds: [updated] });
       }, 5 * 60 * 1000);
 
       return interaction.reply({ content: '✅ Session started.', ephemeral: true });
