@@ -1,10 +1,10 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
 const { Pool } = require('pg');
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMembers],
-  partials: [Partials.Channel],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+  partials: [Partials.Channel]
 });
 
 const pool = new Pool({
@@ -14,6 +14,7 @@ const pool = new Pool({
 
 let sessionMessageId = null;
 const sessionChannelId = '1391712465364193323';
+const shiftChannelId = '1391845254298210304';
 
 function hasRole(member, name) {
   return member.roles.cache.some(role => role.name.toLowerCase() === name.toLowerCase());
@@ -26,7 +27,6 @@ client.once('ready', async () => {
 
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
-
   const { commandName, options, member } = interaction;
 
   if (commandName === 'caradd') {
@@ -88,8 +88,10 @@ client.on('interactionCreate', async interaction => {
 
       const count = await pool.query('SELECT COUNT(*) FROM tickets WHERE user_id = $1', [target.id]);
       if (parseInt(count.rows[0].count) >= 10) {
-        await pool.query('INSERT INTO logs (user_id, username, reason, created_at) VALUES ($1, $2, $3, NOW())',
-          [target.id, target.username, '10 tickets received']);
+        await pool.query(
+          'INSERT INTO logs (user_id, username, reason, created_at) VALUES ($1, $2, $3, NOW())',
+          [target.id, target.username, '10 tickets received']
+        );
       }
 
       const logCount = await pool.query('SELECT COUNT(*) FROM logs WHERE user_id = $1', [target.id]);
@@ -106,6 +108,7 @@ client.on('interactionCreate', async interaction => {
       await target.send({ embeds: [embed] });
 
       return interaction.reply({ content: '✅ Ticket issued.', ephemeral: true });
+
     } catch (err) {
       console.error('❌ Error in /ticket:', err);
       return interaction.reply({ content: '❌ Failed to issue ticket.', ephemeral: true });
@@ -130,7 +133,6 @@ client.on('interactionCreate', async interaction => {
 
   if (commandName === 'shift') {
     const sub = options.getSubcommand();
-
     if (sub === 'start') {
       const department = options.getString('department');
       const role = department === 'fd' ? 'Fire & Rescue' : department === 'le' ? 'Law Enforcement' : 'DOT';
@@ -153,9 +155,9 @@ client.on('interactionCreate', async interaction => {
 
   if (commandName === 'session') {
     const sub = options.getSubcommand();
-
     if (sub === 'start') {
       const link = options.getString('link');
+
       const embed = new EmbedBuilder()
         .setTitle('📢 Session Starting')
         .setDescription('A roleplay session will begin in 5 minutes.\nOnly Public Services and Patreon can join early.')
@@ -167,8 +169,8 @@ client.on('interactionCreate', async interaction => {
         .setURL(link);
 
       const row = new ActionRowBuilder().addComponents(button);
-      const message = await client.channels.cache.get(sessionChannelId).send({ embeds: [embed], components: [row] });
 
+      const message = await client.channels.cache.get(sessionChannelId).send({ embeds: [embed], components: [row] });
       sessionMessageId = message.id;
 
       setTimeout(() => {
@@ -198,8 +200,12 @@ client.on('interactionCreate', async interaction => {
 });
 
 async function cleanupExpiredData() {
-  await pool.query(`DELETE FROM tickets WHERE created_at < NOW() - INTERVAL '10 days'`);
-  await pool.query(`DELETE FROM logs WHERE created_at < NOW() - INTERVAL '10 days'`);
+  try {
+    await pool.query(`DELETE FROM tickets WHERE created_at < NOW() - INTERVAL '10 days'`);
+    await pool.query(`DELETE FROM logs WHERE created_at < NOW() - INTERVAL '10 days'`);
+  } catch (err) {
+    console.error('❌ Error cleaning expired data:', err.message);
+  }
 }
 
 client.login(process.env.TOKEN);
