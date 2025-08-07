@@ -74,7 +74,46 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ embeds: [embed], ephemeral: true });
   }
 
-  if (commandName === 'ticket') {
+ if (commandName === 'ticket') {
+  try {
+    const target = options.getUser('user');
+    const reason = options.getString('reason');
+    const proof = options.getString('proof') || null;
+
+    await pool.query(
+      'INSERT INTO tickets (user_id, username, reason, proof_link, created_at) VALUES ($1, $2, $3, $4, NOW())',
+      [target.id, target.username, reason, proof]
+    );
+
+    const count = await pool.query('SELECT COUNT(*) FROM tickets WHERE user_id = $1', [target.id]);
+    if (parseInt(count.rows[0].count) >= 10) {
+      await pool.query(
+        'INSERT INTO logs (user_id, username, reason, created_at) VALUES ($1, $2, $3, NOW())',
+        [target.id, target.username, '10 tickets received']
+      );
+    }
+
+    const logCount = await pool.query('SELECT COUNT(*) FROM logs WHERE user_id = $1', [target.id]);
+    if (parseInt(logCount.rows[0].count) >= 3) {
+      await target.send('⚠️ You are session banned due to receiving 3 or more logs.');
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('🚨 Ticket Issued')
+      .setDescription(`**User:** ${target}\n**Reason:** ${reason}\n**Proof:** ${proof || 'None'}`)
+      .setColor('Red');
+
+    await interaction.channel.send({ embeds: [embed] });
+    await target.send({ embeds: [embed] });
+
+    return interaction.reply({ content: '✅ Ticket issued.', ephemeral: true });
+
+  } catch (err) {
+    console.error('❌ Error in /ticket:', err);
+    return interaction.reply({ content: '❌ Failed to issue ticket.', ephemeral: true });
+  }
+}
+
     const target = options.getUser('user');
     const reason = options.getString('reason');
     const proof = options.getString('proof') || null;
