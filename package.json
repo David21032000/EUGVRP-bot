@@ -1,18 +1,18 @@
 {
-  "name": "greenville-rp-bot",
+  "name": "eugvrp-bot",
   "version": "1.0.0",
-  "description": "Custom Discord bot for Greenville RP server",
+  "description": "Discord bot for EUGVRP roleplay server",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "deploy": "node deploy-commands.js"
   },
-  "keywords": [],
+  "keywords": ["discord", "bot", "roleplay", "greenville", "eugvrp"],
   "author": "David",
   "license": "MIT",
   "dependencies": {
     "discord.js": "^14.11.0",
     "dotenv": "^16.3.1",
-    "pg": "^8.11.1"
+    "pg": "^8.11.3"
   }
 }
