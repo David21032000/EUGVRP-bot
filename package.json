@@ -1,18 +1,13 @@
 {
   "name": "eugvrp-bot",
   "version": "1.0.0",
-  "description": "Discord bot for EUGVRP roleplay server",
+  "description": "EUGVRP Discord bot (no DB version)",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "deploy": "node deploy-commands.js"
+    "start": "node index.js"
   },
-  "keywords": ["discord", "bot", "roleplay", "greenville", "eugvrp"],
-  "author": "David",
-  "license": "MIT",
   "dependencies": {
     "discord.js": "^14.11.0",
-    "dotenv": "^16.3.1",
-    "pg": "^8.11.3"
+    "dotenv": "^16.3.1"
   }
 }
