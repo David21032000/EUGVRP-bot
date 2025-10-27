@@ -7,7 +7,6 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  Collection,
   Events
 } = require('discord.js');
 
@@ -16,158 +15,178 @@ const client = new Client({
   partials: [Partials.User, Partials.GuildMember]
 });
 
-// ========================
-// ⚙️ Config
-// ========================
-const SESSION_CHANNEL_ID = '1391712465364193323';
-const PS_RADIO_CHANNEL_ID = '1391845254298210304';
-
-const PUBLIC_SERVICES = {
-  fd: 'Fire & Rescue',
-  le: 'Law Enforcement',
-  dot: 'DOT'
-};
-
-const PATREON_ROLE = 'Patreon';
+// === CONFIG ===
+const SESSION_CHANNEL_ID = '1391712465364193323'; // sesiuni
+const PS_RADIO_CHANNEL_ID = '1391845254298210304'; // ps-radio
+const PS_ROLES = ['Fire & Rescue', 'Law Enforcement', 'DOT'];
 const SESSION_HOST_ROLE = 'Session Host';
 
 let currentSession = null;
-let activeShifts = new Map(); // Map(userId -> department)
 
-// ========================
-// 🚀 Ready
-// ========================
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-// ========================
-// 🎯 Slash Command Handler
-// ========================
+// === COMENZI ===
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand()) return;
-
   const { commandName, options, member, guild } = interaction;
 
-  // ==================================================
-  // 🔹 /shift start /shift end
-  // ==================================================
+  // ====== SHIFT ======
   if (commandName === 'shift') {
     const sub = options.getSubcommand();
-    if (sub === 'start') {
-      const department = options.getString('department');
-      const roleName = PUBLIC_SERVICES[department];
-      if (!roleName) return interaction.reply({ content: '❌ Invalid department.', ephemeral: true });
+    const department = options.getString('department');
+    const roleName =
+      department === 'fd' ? 'Fire & Rescue' :
+      department === 'le' ? 'Law Enforcement' :
+      department === 'dot' ? 'DOT' : null;
 
-      const hasRole = member.roles.cache.some(r => r.name === roleName);
-      if (!hasRole) {
-        return interaction.reply({ content: `❌ You don't have the ${roleName} role.`, ephemeral: true });
-      }
+    if (!roleName)
+      return interaction.reply({ content: '❌ Invalid department.', ephemeral: true });
 
-      if (activeShifts.has(member.id)) {
-        return interaction.reply({ content: '⚠️ You already started a shift.', ephemeral: true });
-      }
-
-      activeShifts.set(member.id, roleName);
-      interaction.reply({ content: `🟢 You started your shift as **${roleName}**.`, ephemeral: true });
-
-    } else if (sub === 'end') {
-      if (!activeShifts.has(member.id)) {
-        return interaction.reply({ content: '⚠️ You have no active shift to end.', ephemeral: true });
-      }
-
-      const dept = activeShifts.get(member.id);
-      activeShifts.delete(member.id);
-      interaction.reply({ content: `🔴 You ended your shift as **${dept}**.`, ephemeral: true });
+    if (!member.roles.cache.some(r => r.name === roleName)) {
+      return interaction.reply({
+        content: `🚫 You don't have the **${roleName}** role.`,
+        ephemeral: true
+      });
     }
 
-  // ==================================================
-  // 🔹 /session start /session end
-  // ==================================================
-  } else if (commandName === 'session') {
+    if (sub === 'start') {
+      return interaction.reply({
+        content: `✅ You started your shift as **${roleName}**.\nStay alert and serve with pride! 🚓🚒🚧`,
+        ephemeral: true
+      });
+    }
+
+    if (sub === 'end') {
+      return interaction.reply({
+        content: `🛑 Shift ended. Great work today, **${member.displayName}**! 💼`,
+        ephemeral: true
+      });
+    }
+  }
+
+  // ====== SESSION ======
+  if (commandName === 'session') {
     const sub = options.getSubcommand();
 
-    // ========================
-    // 🟢 /session start
-    // ========================
     if (sub === 'start') {
-      const link = options.getString('link');
-
-      // Only Session Host can start
+      // doar Session Host poate folosi
       if (!member.roles.cache.some(r => r.name === SESSION_HOST_ROLE)) {
-        return interaction.reply({ content: '❌ Only Session Hosts can start a session.', ephemeral: true });
+        return interaction.reply({
+          content: '❌ Only **Session Hosts** can start a session.',
+          ephemeral: true
+        });
       }
 
-      const sessionChannel = guild.channels.cache.get(SESSION_CHANNEL_ID);
-      if (!sessionChannel) return interaction.reply({ content: '⚠️ Session channel not found.', ephemeral: true });
+      const link = options.getString('link');
+      const sessionChannel = client.channels.cache.get(SESSION_CHANNEL_ID);
+      if (!sessionChannel)
+        return interaction.reply({ content: '⚠️ Session channel not found.', ephemeral: true });
 
-      // Embed inițial (fără link)
+      // mesaj principal
       const embed = new EmbedBuilder()
-        .setTitle('🚨 Session Started')
-        .setDescription(`**Started by:** ${member}\n\nFD, LE, DOT & Patreon may join now.\nCivilians can join in **5 minutes**.`)
+        .setTitle('🚨 New Roleplay Session Incoming!')
+        .setDescription(
+          `**Prepare your units and vehicles!**\n\n` +
+          `🕐 **Public Services (FD, LE, DOT)** can join immediately.\n` +
+          `⏳ **Civilians** will gain access in **5 minutes**.\n\n` +
+          `🎮 **Private Server:** Access available soon.`
+        )
         .setColor('Red')
-        .setTimestamp();
+        .setTimestamp()
+        .setFooter({ text: 'EUGVRP Session System', iconURL: guild.iconURL() });
 
-      const msg = await sessionChannel.send({ embeds: [embed] });
-      currentSession = msg.id;
+      const button = new ButtonBuilder()
+        .setLabel('Join Session 🚘')
+        .setStyle(ButtonStyle.Link)
+        .setURL(link);
 
-      interaction.reply({ content: '✅ Session started successfully.', ephemeral: true });
+      const row = new ActionRowBuilder().addComponents(button);
 
-      // Anunț în PS-Radio
-      const radio = guild.channels.cache.get(PS_RADIO_CHANNEL_ID);
-      if (radio) {
-        radio.send(`📢 **Session started by ${member.displayName}!** FD, LE, DOT & Patreon may join now. Civilians in 5 minutes.`);
-      }
+      await sessionChannel.send({ embeds: [embed], components: [row] });
+      currentSession = true;
 
-      // 🕒 După 5 minute -> adaugă linkul în embed
+      // anunț pentru civili
+      const civilMsg = await sessionChannel.send({
+        content: '⚠️ **Civilians cannot join yet.** Please wait **5 minutes.** ⏳'
+      });
+
       setTimeout(async () => {
-        const updatedEmbed = new EmbedBuilder()
-          .setTitle('🚨 Session Open for All')
-          .setDescription(`**Started by:** ${member}\n\n🔓 Civilians may now join!\n🔗 [Join Session Here](${link})`)
-          .setColor('Green')
-          .setTimestamp();
-
-        await msg.edit({ embeds: [updatedEmbed] });
-
-        if (radio) radio.send(`✅ Civilians may now join the session!`);
+        await civilMsg.delete().catch(() => {});
+        const openEmbed = new EmbedBuilder()
+          .setTitle('✅ Session is now open for all!')
+          .setDescription('Civilians can now join! Drive safe and enjoy your RP! 🚗💨')
+          .setColor('Green');
+        await sessionChannel.send({ embeds: [openEmbed], components: [row] });
       }, 5 * 60 * 1000);
 
-    // ========================
-    // 🔴 /session end
-    // ========================
-    } else if (sub === 'end') {
-      // Only Session Host can end
-      if (!member.roles.cache.some(r => r.name === SESSION_HOST_ROLE)) {
-        return interaction.reply({ content: '❌ Only Session Hosts can end a session.', ephemeral: true });
-      }
+      interaction.reply({ content: '✅ Session started successfully.', ephemeral: true });
+    }
 
-      const sessionChannel = guild.channels.cache.get(SESSION_CHANNEL_ID);
-      if (currentSession && sessionChannel) {
-        const msg = await sessionChannel.messages.fetch(currentSession).catch(() => null);
-        if (msg) await msg.delete();
-        currentSession = null;
+    if (sub === 'end') {
+      if (!currentSession)
+        return interaction.reply({ content: '⚠️ No active session found.', ephemeral: true });
 
-        // Oprire automată a tuturor shifturilor publice
-        activeShifts.clear();
+      const sessionChannel = client.channels.cache.get(SESSION_CHANNEL_ID);
+      const radioChannel = client.channels.cache.get(PS_RADIO_CHANNEL_ID);
 
-        const endEmbed = new EmbedBuilder()
-          .setTitle('🛑 Session Ended')
-          .setDescription(
-            'The session has concluded.\n\n' +
-            'All active shifts from **Fire & Rescue**, **Law Enforcement**, and **DOT** have been ended.\n\n' +
-            'Thank you for your service!'
-          )
+      const endEmbed = new EmbedBuilder()
+        .setTitle('🛑 Session Ended')
+        .setDescription(
+          `The session has **officially ended.**\n\n` +
+          `All shifts for **FD 🚒**, **LE 🚓**, and **DOT 🚧** have been stopped.\n\n` +
+          `💙 Thank you all for participating and roleplaying responsibly!`
+        )
+        .setColor('DarkRed')
+        .setTimestamp()
+        .setFooter({ text: 'EUGVRP | Session Closed' });
+
+      await sessionChannel.send({ embeds: [endEmbed] });
+
+      // trimite și în canalul ps-radio
+      if (radioChannel) {
+        const radioEmbed = new EmbedBuilder()
+          .setTitle('📻 Radio Update')
+          .setDescription('🔴 **The current RP session has ended.**\nAll public service units are now off-duty.')
           .setColor('Red')
           .setTimestamp();
-
-        const radio = guild.channels.cache.get(PS_RADIO_CHANNEL_ID);
-        if (radio) radio.send({ embeds: [endEmbed] });
-
-        interaction.reply({ content: '🛑 Session ended successfully.', ephemeral: true });
-      } else {
-        interaction.reply({ content: '⚠️ No active session found.', ephemeral: true });
+        await radioChannel.send({ embeds: [radioEmbed] });
       }
+
+      currentSession = null;
+      interaction.reply({ content: '✅ Session ended and all shifts have been stopped.', ephemeral: true });
     }
+  }
+
+  // ====== TICKET ======
+  if (commandName === 'ticket') {
+    const target = options.getUser('user');
+    const reason = options.getString('reason');
+    const proof = options.getString('proof');
+
+    const embed = new EmbedBuilder()
+      .setTitle('📋 New Ticket')
+      .setColor('Orange')
+      .setDescription(`**User:** ${target}\n**Reason:** ${reason}${proof ? `\n**Proof:** ${proof}` : ''}`)
+      .setTimestamp();
+
+    await target.send({ content: '📩 You have received a ticket.', embeds: [embed] }).catch(() => {});
+    interaction.reply({ content: `✅ Ticket sent to ${target.tag}.`, ephemeral: true });
+  }
+
+  // ====== LOG ======
+  if (commandName === 'log') {
+    const target = options.getUser('user');
+    const reason = options.getString('reason');
+
+    const embed = new EmbedBuilder()
+      .setTitle('⚠️ User Log')
+      .setColor('Yellow')
+      .setDescription(`**User:** ${target}\n**Reason:** ${reason}`)
+      .setTimestamp();
+
+    interaction.reply({ embeds: [embed], ephemeral: true });
   }
 });
 
