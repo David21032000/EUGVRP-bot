@@ -10,138 +10,237 @@ const {
   Events
 } = require('discord.js');
 
-// === CONFIG - modifică ID-urile dacă e nevoie
-const SESSION_CHANNEL_ID = '1391712465364193323';   // canal sesiuni
-const PS_RADIO_CHANNEL_ID = '1391845254298210304';  // ps-radio
-const SESSION_HOST_ROLE = 'Session Host';
-const PATREON_ROLE = 'Patreon';
-const PS_ROLE_NAMES = ['Fire & Rescue', 'Law Enforcement', 'DOT']; // numele rolurilor public service
+// ---------------------------
+// CONFIG (use the IDs you gave)
+const SESSION_CHANNEL_ID = '1391712465364193323';   // session announcements channel
+const PS_RADIO_CHANNEL_ID = '1391845254298210304';  // PS-Radio channel (where /shift is used & radio updates)
 
-// === INIT CLIENT
+const ROLE_IDS = {
+  SESSION_HOST: '1392137660117549056',
+  PATREON: '1392139021295292436',
+  LE: '1392135802053722222',
+  FD: '1392137836412665948',
+  DOT: '1392138933336543252',
+  CIVILIAN: '1392137321846935712'
+};
+// ---------------------------
+
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages],
   partials: [Partials.User, Partials.GuildMember]
 });
 
-// === RUNTIME STATE (no DB - in memory)
-let currentSession = null;
-// currentSession = {
-//   messageId: '...', channelId: '...', link: 'https://...', startTimestamp: 1234567890
-// }
+// Runtime state (no DB)
+let currentSession = null; // { messageId, channelId, link, startTimestamp, hostId }
+const activeShifts = new Map(); // userId -> { departmentCode, departmentName, startedAt }
 
-const activeShifts = new Map(); // userId -> { department: 'Fire & Rescue', startedAt: number }
+// Utility helpers
+const fiveMinutesMs = 5 * 60 * 1000;
+function isSessionHost(member) {
+  return member.roles.cache.has(ROLE_IDS.SESSION_HOST);
+}
+function isPatron(member) {
+  return member.roles.cache.has(ROLE_IDS.PATREON);
+}
+function hasFD(member) {
+  return member.roles.cache.has(ROLE_IDS.FD);
+}
+function hasLE(member) {
+  return member.roles.cache.has(ROLE_IDS.LE);
+}
+function hasDOT(member) {
+  return member.roles.cache.has(ROLE_IDS.DOT);
+}
+function isCivilian(member) {
+  // Treat as civilian if they have the civilian role OR do not have any PS roles
+  if (member.roles.cache.has(ROLE_IDS.CIVILIAN)) return true;
+  return !(hasFD(member) || hasLE(member) || hasDOT(member) || isPatron(member) || isSessionHost(member));
+}
+function departmentFromCode(code) {
+  if (code === 'fd') return { name: 'Fire & Rescue', emoji: '🚒' };
+  if (code === 'le') return { name: 'Law Enforcement', emoji: '🚓' };
+  if (code === 'dot') return { name: 'DOT', emoji: '🚧' };
+  return null;
+}
 
-// === UTIL
-function userHasAnyPSRole(member) {
-  return PS_ROLE_NAMES.some(name => member.roles.cache.some(r => r.name === name));
-}
-function userIsPatreon(member) {
-  return member.roles.cache.some(r => r.name === PATREON_ROLE);
-}
-function userIsSessionHost(member) {
-  return member.roles.cache.some(r => r.name === SESSION_HOST_ROLE);
-}
-
-// === READY
+// Ready
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-// === INTERACTION (commands + buttons)
+// Interaction handler (commands + buttons)
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    // ---------- button interaction (Join Session) ----------
+    // ---------- Button interaction: join_session ----------
     if (interaction.isButton()) {
-      // customId expected: 'join_session'
-      if (!interaction.customId || !interaction.customId.startsWith('join_session')) {
-        return;
-      }
+      if (!interaction.customId || !interaction.customId.startsWith('join_session')) return;
 
-      // must have an active session
-      if (!currentSession || !currentSession.messageId) {
+      if (!currentSession) {
         return interaction.reply({ content: '⚠️ There is no active session right now.', ephemeral: true });
       }
 
-      // ensure the button belongs to current session message
+      // ensure this button belongs to the live session message
       if (interaction.message && interaction.message.id !== currentSession.messageId) {
-        // old message button clicked — ignore with polite message
         return interaction.reply({ content: '⚠️ This session message is outdated.', ephemeral: true });
       }
 
       const member = interaction.member;
       const now = Date.now();
-      const fiveMinMs = 5 * 60 * 1000;
-      const allowedEarly = userHasAnyPSRole(member) || userIsSessionHost(member) || userIsPatreon(member);
+      const elapsed = now - currentSession.startTimestamp;
+      const allowedEarly = hasFD(member) || hasLE(member) || hasDOT(member) || isPatron(member) || isSessionHost(member);
 
       if (allowedEarly) {
         // allowed immediately
-        return interaction.reply({ content: `🔓 Access granted. Here is the link: ${currentSession.link}`, ephemeral: true });
-      }
-
-      // civilians: check time
-      const elapsed = now - currentSession.startTimestamp;
-      if (elapsed >= fiveMinMs) {
-        return interaction.reply({ content: `🔓 Civilians now allowed — here is the link: ${currentSession.link}`, ephemeral: true });
+        await interaction.reply({ content: `🔓 Access granted. Here is the session link: ${currentSession.link}`, ephemeral: true });
       } else {
-        const remainingSec = Math.ceil((fiveMinMs - elapsed) / 1000);
-        return interaction.reply({ content: `⏳ Civilians can join in ${remainingSec} seconds. Please wait a bit.`, ephemeral: true });
+        // civilian - check 5 minutes delay
+        if (elapsed >= fiveMinutesMs) {
+          await interaction.reply({ content: `🔓 Civilians are now allowed. Here is the session link: ${currentSession.link}`, ephemeral: true });
+        } else {
+          const remainingSec = Math.ceil((fiveMinutesMs - elapsed) / 1000);
+          await interaction.reply({ content: `⏳ Civilians can join in ${remainingSec} seconds. Please wait a bit.`, ephemeral: true });
+        }
       }
+      return;
     }
 
-    // ---------- chat input commands ----------
+    // ---------- Chat input commands ----------
     if (!interaction.isChatInputCommand()) return;
 
-    const { commandName } = interaction;
+    const { commandName, options, member, guild, channelId } = interaction;
 
-    // ---------- SHIFT
+    // ---------- /shift ----------
     if (commandName === 'shift') {
-      const sub = interaction.options.getSubcommand();
-      const deptCode = interaction.options.getString('department');
-      const roleName = deptCode === 'fd' ? 'Fire & Rescue' : deptCode === 'le' ? 'Law Enforcement' : deptCode === 'dot' ? 'DOT' : null;
+      // only allow use in PS_RADIO_CHANNEL
+      if (channelId !== PS_RADIO_CHANNEL_ID) {
+        return interaction.reply({ content: `❌ You must use /shift commands in the PS-Radio channel.`, ephemeral: true });
+      }
 
-      if (!roleName) {
+      const sub = options.getSubcommand();
+      const deptCode = options.getString('department'); // 'fd' | 'le' | 'dot'
+
+      // validate department
+      const dept = departmentFromCode(deptCode);
+      if (!dept) {
         return interaction.reply({ content: '❌ Invalid department selected.', ephemeral: true });
       }
 
-      const member = interaction.member;
-
-      // check role
-      if (!member.roles.cache.some(r => r.name === roleName)) {
-        return interaction.reply({ content: `🚫 You don't have the **${roleName}** role.`, ephemeral: true });
+      // Check session active
+      if (!currentSession) {
+        return interaction.reply({ content: '⚠️ There is no active session right now. You cannot start a shift.', ephemeral: true });
       }
 
+      // Shift start
       if (sub === 'start') {
-        if (activeShifts.has(member.id)) {
-          const cur = activeShifts.get(member.id);
-          return interaction.reply({ content: `⚠️ You already have an active shift as **${cur.department}** (started <t:${Math.floor(cur.startedAt/1000)}:R>).`, ephemeral: true });
+        // verify member has the required role
+        const hasRole = (deptCode === 'fd' && hasFD(member)) || (deptCode === 'le' && hasLE(member)) || (deptCode === 'dot' && hasDOT(member));
+        if (!hasRole) {
+          return interaction.reply({ content: `🚫 You don't have the required role for **${dept.name}**.`, ephemeral: true });
         }
 
-        activeShifts.set(member.id, { department: roleName, startedAt: Date.now() });
-        return interaction.reply({ content: `🟢 Shift started as **${roleName}**. Stay safe out there! ${roleName === 'Fire & Rescue' ? '🚒' : roleName === 'Law Enforcement' ? '🚓' : '🚧'}`, ephemeral: true });
+        // prevent starting twice
+        if (activeShifts.has(member.id)) {
+          const s = activeShifts.get(member.id);
+          return interaction.reply({
+            content: `⚠️ You already have an active shift as **${s.departmentName}** (started <t:${Math.floor(s.startedAt/1000)}:R>).`,
+            ephemeral: true
+          });
+        }
+
+        // civilian-specific rule: civilians not allowed for first 5 minutes
+        const now = Date.now();
+        const elapsed = now - currentSession.startTimestamp;
+        if (isCivilian(member) && elapsed < fiveMinutesMs) {
+          const remainingSec = Math.ceil((fiveMinutesMs - elapsed) / 1000);
+          return interaction.reply({ content: `⏳ Civilians can start shifts in ${remainingSec} seconds. Please wait.`, ephemeral: true });
+        }
+
+        // register shift
+        activeShifts.set(member.id, {
+          departmentCode: deptCode,
+          departmentName: dept.name,
+          startedAt: Date.now()
+        });
+
+        // reply in channel ephemeral
+        await interaction.reply({ content: `🟢 You have started your shift as **${dept.name}**. Stay safe and follow RP rules! ${dept.emoji}`, ephemeral: true });
+
+        // DM to user
+        try {
+          await member.send(`✅ You have successfully started your shift as **${dept.name}**. Please remain active and follow server rules.`);
+        } catch (dmErr) {
+          // ignore DM failure (user might have DMs disabled)
+        }
+
+        // DM to session host (if exists)
+        if (currentSession && currentSession.hostId) {
+          try {
+            const hostMember = await guild.members.fetch(currentSession.hostId).catch(() => null);
+            if (hostMember) {
+              await hostMember.send(`👮 ${member.user.tag} has started their shift as **${dept.name}**.`);
+            }
+          } catch (err) { /* ignore */ }
+        }
+
+        // PS-RADIO announcement
+        try {
+          const radio = await guild.channels.fetch(PS_RADIO_CHANNEL_ID).catch(() => null);
+          if (radio) {
+            const announce = `🚨 **${member.displayName}** is now on duty as **${dept.name}** ${dept.emoji}`;
+            await radio.send({ content: announce }).catch(() => {});
+          }
+        } catch (err) {}
+        return;
       }
 
+      // Shift end
       if (sub === 'end') {
         if (!activeShifts.has(member.id)) {
-          return interaction.reply({ content: `⚠️ You have no active shift to end. Use /shift start first.`, ephemeral: true });
+          return interaction.reply({ content: '⚠️ You have no active shift to end.', ephemeral: true });
         }
 
         const data = activeShifts.get(member.id);
         activeShifts.delete(member.id);
         const durationMs = Date.now() - data.startedAt;
         const minutes = Math.round(durationMs / 60000);
-        return interaction.reply({ content: `🔴 Shift ended for **${data.department}**. Duration: ${minutes} minute(s). Good job!`, ephemeral: true });
-      }
-    }
 
-    // ---------- SESSION
+        await interaction.reply({ content: `🔴 Your shift as **${data.departmentName}** has ended. Duration: ${minutes} minute(s). Thank you!`, ephemeral: true });
+
+        // DM to user
+        try {
+          await member.send(`🛑 Your shift as **${data.departmentName}** has ended. Duration: ${minutes} minute(s). Thank you for your service.`);
+        } catch (dmErr) {}
+
+        // Notify session host
+        if (currentSession && currentSession.hostId) {
+          try {
+            const hostMember = await guild.members.fetch(currentSession.hostId).catch(() => null);
+            if (hostMember) {
+              await hostMember.send(`📌 ${member.user.tag} has ended their shift as **${data.departmentName}**.`);
+            }
+          } catch (err) {}
+        }
+
+        // PS-RADIO announcement
+        try {
+          const radio = await guild.channels.fetch(PS_RADIO_CHANNEL_ID).catch(() => null);
+          if (radio) {
+            await radio.send({ content: `📻 **${member.displayName}** has ended their shift as **${data.departmentName}**.` }).catch(() => {});
+          }
+        } catch (err) {}
+        return;
+      }
+    } // end /shift
+
+    // ---------- /session ----------
     if (commandName === 'session') {
-      const sub = interaction.options.getSubcommand();
+      const sub = options.getSubcommand();
 
       // SESSION START
       if (sub === 'start') {
-        // only Session Host
-        if (!userIsSessionHost(interaction.member)) {
-          return interaction.reply({ content: '❌ Only Session Hosts can start sessions.', ephemeral: true });
+        // only session host can start
+        if (!isSessionHost(member)) {
+          return interaction.reply({ content: '❌ Only Session Hosts can start a session.', ephemeral: true });
         }
 
         // prevent double start
@@ -149,24 +248,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: '⚠️ There is already an active session. End it first with /session end.', ephemeral: true });
         }
 
-        const link = interaction.options.getString('link');
-        const sessionChannel = await interaction.guild.channels.fetch(SESSION_CHANNEL_ID).catch(() => null);
+        const link = options.getString('link');
+        const sessionChannel = await guild.channels.fetch(SESSION_CHANNEL_ID).catch(() => null);
         if (!sessionChannel) return interaction.reply({ content: '⚠️ Session channel not found. Contact an admin.', ephemeral: true });
 
-        // create embed (no raw link visible to everyone)
+        // Send embed without the raw link (button only)
         const embed = new EmbedBuilder()
-          .setTitle('🚨 New Roleplay Session Incoming!')
+          .setTitle('🚨 New Roleplay Session Started!')
           .setDescription(
-            `**Started by:** ${interaction.member.displayName}\n\n` +
-            `🔹 **Public Services (FD, LE, DOT)** & **Patreon** may join **now** via the Join button.\n` +
-            `⏳ **Civilians** will be allowed in **5 minutes** (the Join button will grant access after that).\n\n` +
-            `🎮 Click the button below to request the session link.`
+            `**Host:** ${member.displayName}\n\n` +
+            `🔹 Public Services (FD, LE, DOT) & Patrons may join now by clicking the button below.\n` +
+            `⏳ Civilians will be allowed in 5 minutes.\n\n` +
+            `🎮 Click the button to request the session link.`
           )
           .setColor(0xE74C3C)
           .setTimestamp()
-          .setFooter({ text: 'EUGVRP Session System', iconURL: interaction.guild.iconURL() || undefined });
+          .setFooter({ text: 'EUGVRP Session System', iconURL: guild.iconURL() || undefined });
 
-        // custom button (not link) -> bot will give link via ephemeral if allowed
+        // custom button — not a link: bot will provide the link via DM/ephemeral if allowed
         const joinButton = new ButtonBuilder()
           .setCustomId('join_session')
           .setLabel('Request Join Link 🔗')
@@ -174,34 +273,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const row = new ActionRowBuilder().addComponents(joinButton);
 
-        const sent = await sessionChannel.send({ embeds: [embed], components: [row] });
-        // save current session
+        const sentMessage = await sessionChannel.send({ embeds: [embed], components: [row] });
         currentSession = {
-          messageId: sent.id,
+          messageId: sentMessage.id,
           channelId: sessionChannel.id,
           link,
-          startTimestamp: Date.now()
+          startTimestamp: Date.now(),
+          hostId: member.id
         };
 
-        // send PS-radio announcement
-        const radioChannel = await interaction.guild.channels.fetch(PS_RADIO_CHANNEL_ID).catch(() => null);
-        if (radioChannel) {
-          const radioEmbed = new EmbedBuilder()
-            .setTitle('📢 Session Started')
-            .setDescription(`**${interaction.member.displayName}** started a session.\nFD, LE, DOT & Patreon may join now. Civilians in 5 minutes.`)
-            .setColor(0x1ABC9C)
-            .setTimestamp();
-          await radioChannel.send({ embeds: [radioEmbed] }).catch(() => {});
-        }
+        // PS-Radio announcement
+        try {
+          const radio = await guild.channels.fetch(PS_RADIO_CHANNEL_ID).catch(() => null);
+          if (radio) {
+            const radioEmbed = new EmbedBuilder()
+              .setTitle('📢 Session Started')
+              .setDescription(`${member.displayName} started a session.\nFD, LE, DOT & Patrons may join now. Civilians in 5 minutes.`)
+              .setColor(0x1ABC9C)
+              .setTimestamp();
+            await radio.send({ embeds: [radioEmbed] }).catch(() => {});
+          }
+        } catch (err) {}
+
+        // DM to session host
+        try {
+          await member.send(`✅ Your session has been started successfully. Players can now begin their shifts.`);
+        } catch (dmErr) { /* ignore */ }
 
         await interaction.reply({ content: '✅ Session started successfully.', ephemeral: true });
+
         return;
       }
 
       // SESSION END
       if (sub === 'end') {
-        // only Session Host
-        if (!userIsSessionHost(interaction.member)) {
+        // only session host can end
+        if (!isSessionHost(member)) {
           return interaction.reply({ content: '❌ Only Session Hosts can end sessions.', ephemeral: true });
         }
 
@@ -209,8 +316,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return interaction.reply({ content: '⚠️ There is no active session to end.', ephemeral: true });
         }
 
-        // fetch channel & message and delete message
-        const sessionChannel = await interaction.guild.channels.fetch(currentSession.channelId).catch(() => null);
+        // fetch session channel & message and delete the message if exists
+        const sessionChannel = await guild.channels.fetch(currentSession.channelId).catch(() => null);
         if (sessionChannel) {
           const msg = await sessionChannel.messages.fetch(currentSession.messageId).catch(() => null);
           if (msg) {
@@ -218,53 +325,74 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
         }
 
-        // Build nice end embed and PS-radio embed, include ended shifts count and names
+        // Prepare list of ended shifts for host DM and radio embed
         const endedList = [];
         for (const [userId, info] of activeShifts.entries()) {
-          // try to fetch member username (best-effort)
-          const m = await interaction.guild.members.fetch(userId).catch(() => null);
-          endedList.push(m ? `${m.displayName} (${info.department})` : `${userId} (${info.department})`);
+          const mem = await guild.members.fetch(userId).catch(() => null);
+          const display = mem ? `${mem.user.tag} — ${info.departmentName}` : `${userId} — ${info.departmentName}`;
+          endedList.push(display);
         }
         const endedCount = endedList.length;
 
-        // clear active shifts
+        // DM each user who had an active shift
+        for (const [userId, info] of activeShifts.entries()) {
+          try {
+            const mem = await guild.members.fetch(userId).catch(() => null);
+            if (mem) {
+              await mem.send(`⚠️ The session has ended. Your shift as **${info.departmentName}** has been automatically closed.`).catch(() => {});
+            }
+          } catch (err) { /* ignore */ }
+        }
+
+        // Clear all active shifts
         activeShifts.clear();
 
+        // Session end embed for session channel
         const endEmbed = new EmbedBuilder()
           .setTitle('🛑 Session Ended — All units stand down')
           .setDescription(
-            `The session started by **${interaction.member.displayName}** has concluded.\n\n` +
-            `🔻 **All active shifts for FD, LE & DOT have been stopped automatically.**\n` +
-            `📌 **Shifts ended:** ${endedCount}\n` +
-            (endedCount > 0 ? `\n👥 ${endedList.slice(0, 25).join('\n')}` : '\nNo active shifts were found.')
+            `The session started by **${member.displayName}** has concluded.\n\n` +
+            `🔻 All active shifts for FD, LE & DOT have been stopped automatically.\n\n` +
+            `📌 Shifts ended: **${endedCount}**` +
+            (endedCount > 0 ? `\n\n${endedList.slice(0, 25).join('\n')}` : '\n\nNo active shifts were found.')
           )
           .setColor(0x8B0000)
           .setTimestamp()
           .setFooter({ text: 'EUGVRP | Session Closed' });
 
-        // send to session channel
         if (sessionChannel) {
           await sessionChannel.send({ embeds: [endEmbed] }).catch(() => {});
         }
 
-        // send to PS Radio channel
-        const radioChannel = await interaction.guild.channels.fetch(PS_RADIO_CHANNEL_ID).catch(() => null);
-        if (radioChannel) {
-          const radioEmbed = new EmbedBuilder()
-            .setTitle('📻 Radio Update: Session Concluded')
-            .setDescription('🔴 The current RP session has ended. All PS units are now off-duty.')
-            .setColor(0xE74C3C)
-            .setTimestamp();
-          await radioChannel.send({ embeds: [radioEmbed] }).catch(() => {});
-        }
+        // PS-Radio embed
+        try {
+          const radio = await guild.channels.fetch(PS_RADIO_CHANNEL_ID).catch(() => null);
+          if (radio) {
+            const radioEmbed = new EmbedBuilder()
+              .setTitle('📻 Radio Update: Session Concluded')
+              .setDescription('🔴 The current RP session has ended. All public service units are now off-duty.')
+              .setColor(0xE74C3C)
+              .setTimestamp();
+            await radio.send({ embeds: [radioEmbed] }).catch(() => {});
+          }
+        } catch (err) {}
 
-        // clear currentSession
+        // DM summary to session host (the one who ended it)
+        try {
+          await member.send(
+            `📋 The session has ended. ${endedCount} shift(s) were closed.\n` +
+            (endedCount > 0 ? `Closed shifts:\n- ${endedList.join('\n- ')}` : 'No shifts were active during this session.')
+          ).catch(() => {});
+        } catch (err) {}
+
+        // clear current session
         currentSession = null;
+
         return interaction.reply({ content: '✅ Session ended: all shifts stopped and announcements sent.', ephemeral: true });
       }
-    }
+    } // end /session
 
-    // ---------- TICKET ----------
+    // ---------- /ticket ----------
     if (commandName === 'ticket') {
       const target = interaction.options.getUser('user');
       const reason = interaction.options.getString('reason');
@@ -276,12 +404,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setDescription(`**User:** ${target.tag}\n**Reason:** ${reason}${proof ? `\n**Proof:** ${proof}` : ''}`)
         .setTimestamp();
 
-      // DM user best-effort
-      await target.send({ content: '📩 You have received a ticket.', embeds: [embed] }).catch(() => {});
+      // DM the user
+      try {
+        await target.send({ content: '📩 You have received a ticket.', embeds: [embed] }).catch(() => {});
+      } catch (err) {}
+
       return interaction.reply({ content: `✅ Ticket sent to ${target.tag}.`, ephemeral: true });
     }
 
-    // ---------- LOG ----------
+    // ---------- /log ----------
     if (commandName === 'log') {
       const target = interaction.options.getUser('user');
       const reason = interaction.options.getString('reason');
@@ -303,7 +434,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// === Graceful shutdown (optional) ===
-// process.on('SIGINT', () => client.destroy()); // uncomment if you like
+// Optional: handle unexpected shutdown to avoid leaving stale state (not persistent across restarts)
+process.on('SIGINT', () => {
+  console.log('Shutting down gracefully...');
+  client.destroy();
+  process.exit();
+});
 
 client.login(process.env.TOKEN);
