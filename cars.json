@@ -1,0 +1,16 @@
+[
+  {
+    "owner": "David",
+    "name": "Audi",
+    "model": "A6",
+    "color": "Black",
+    "plate": "B-123-DAV"
+  },
+  {
+    "owner": "Alex",
+    "name": "BMW",
+    "model": "M5",
+    "color": "Blue",
+    "plate": "BZ-777-LEX"
+  }
+]
