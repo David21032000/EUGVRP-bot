@@ -1,3 +1,4 @@
+// deploy-commands.js - register slash commands for guild
 require('dotenv').config();
 const { REST, Routes, SlashCommandBuilder } = require('discord.js');
 
@@ -42,6 +43,28 @@ const commands = [
         .setDescription('End the current session (Session Host only)')
     ),
 
+  // CAR
+  new SlashCommandBuilder()
+    .setName('car')
+    .setDescription('Vehicle registry system')
+    .addSubcommand(sub =>
+      sub.setName('add')
+        .setDescription('Register a vehicle')
+        .addStringOption(opt => opt.setName('name').setDescription('Vehicle display name').setRequired(true))
+        .addStringOption(opt => opt.setName('model').setDescription('Vehicle model').setRequired(true))
+        .addStringOption(opt => opt.setName('color').setDescription('Vehicle color').setRequired(true))
+        .addStringOption(opt => opt.setName('plate').setDescription('License plate').setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName('list')
+        .setDescription('List registered vehicles')
+    )
+    .addSubcommand(sub =>
+      sub.setName('remove')
+        .setDescription('Remove a registered vehicle by plate')
+        .addStringOption(opt => opt.setName('plate').setDescription('License plate to remove').setRequired(true))
+    ),
+
   // TICKET
   new SlashCommandBuilder()
     .setName('ticket')
@@ -56,8 +79,7 @@ const commands = [
     .setDescription('Create a log about a user')
     .addUserOption(opt => opt.setName('user').setDescription('User').setRequired(true))
     .addStringOption(opt => opt.setName('reason').setDescription('Reason').setRequired(true))
-]
-.map(cmd => cmd.toJSON());
+].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
